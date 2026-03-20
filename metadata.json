@@ -1,0 +1,5 @@
+{
+  "name": "HAR Insight Analyzer",
+  "description": "Analyze HTTP Archive (HAR) files to identify network bottlenecks, broken requests, and receive AI-powered optimization advice.",
+  "requestFramePermissions": []
+}
