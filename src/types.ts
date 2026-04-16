@@ -71,3 +71,8 @@ export interface AnalysisResult {
   }>;
   advice: string;
 }
+
+export interface Message {
+  role: 'user' | 'model';
+  content: string;
+}

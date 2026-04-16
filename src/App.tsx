@@ -14,7 +14,8 @@ import {
   Zap,
   ShieldAlert,
   Info,
-  ExternalLink
+  ExternalLink,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -33,6 +34,7 @@ import ReactMarkdown from 'react-markdown';
 import { cn } from './lib/utils';
 import { HARData, HAREntry, AnalysisResult } from './types';
 import { analyzeHARWithAI } from './services/aiService';
+import ChatBox from './components/ChatBox';
 
 export default function App() {
   const [harData, setHarData] = useState<HARData | null>(null);
@@ -129,6 +131,42 @@ export default function App() {
     return sortDirection === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />;
   };
 
+  const handleExportMarkdown = () => {
+    if (!harData || !analysis) return;
+
+    const markdown = `
+# HAR Analysis Report
+Generated on ${new Date().toLocaleString()}
+
+## Summary
+- **Total Requests:** ${analysis.summary.totalRequests}
+- **Failed Requests:** ${analysis.summary.failedRequests}
+- **Average Response Time:** ${Math.round(analysis.summary.avgResponseTime)}ms
+- **Total Payload Size:** ${formatSize(analysis.summary.totalSize)}
+
+## AI Diagnostic Advice
+${analysis.advice}
+
+## Identified Issues
+${analysis.issues.map(issue => `- [${issue.type.toUpperCase()}] **${issue.title}**: ${issue.description}${issue.affectedUrl ? ` (Affected URL: ${issue.affectedUrl})` : ''}`).join('\n')}
+
+## Network Requests
+| URL | Status | Method | Time | Size |
+|-----|--------|--------|------|------|
+${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.request.method} | ${Math.round(e.time)}ms | ${formatSize(e.response.content.size)} |`).join('\n')}
+    `.trim();
+
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `har-analysis-${new Date().getTime()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -167,15 +205,24 @@ export default function App() {
         </div>
         
         {harData && (
-          <button 
-            onClick={() => {
-              setHarData(null);
-              setAnalysis(null);
-            }}
-            className="text-sm font-medium px-4 py-2 rounded-lg hover:bg-black/5 transition-colors"
-          >
-            Clear Analysis
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={handleExportMarkdown}
+              className="text-sm font-medium px-4 py-2 rounded-lg bg-black text-white hover:bg-black/80 transition-colors flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Export Markdown
+            </button>
+            <button 
+              onClick={() => {
+                setHarData(null);
+                setAnalysis(null);
+              }}
+              className="text-sm font-medium px-4 py-2 rounded-lg hover:bg-black/5 transition-colors"
+            >
+              Clear Analysis
+            </button>
+          </div>
         )}
       </header>
 
@@ -440,6 +487,7 @@ export default function App() {
           </div>
         )}
       </main>
+      {harData && <ChatBox harData={harData} />}
     </div>
   );
 }
