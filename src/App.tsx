@@ -35,6 +35,7 @@ import { cn } from './lib/utils';
 import { HARData, HAREntry, AnalysisResult } from './types';
 import { analyzeHARWithAI } from './services/aiService';
 import ChatBox from './components/ChatBox';
+import RequestDetail from './components/RequestDetail';
 
 export default function App() {
   const [harData, setHarData] = useState<HARData | null>(null);
@@ -45,6 +46,7 @@ export default function App() {
   const [filter, setFilter] = useState<'all' | 'errors' | 'slow'>('all');
   const [sortField, setSortField] = useState<keyof HAREntry | 'url' | 'status' | 'method' | 'size' | 'time'>('time');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [selectedEntry, setSelectedEntry] = useState<HAREntry | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (file: File) => {
@@ -432,9 +434,13 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
                     {filteredEntries.map((entry, i) => (
                       <div key={i} className="grid grid-cols-[1fr_100px_100px_120px_100px] gap-4 px-6 py-4 hover:bg-black/[0.01] transition-colors items-center">
                         <div className="min-w-0">
-                          <p className="text-sm font-medium truncate" title={entry.request.url}>
+                          <button 
+                            onClick={() => setSelectedEntry(entry)}
+                            className="text-sm font-medium truncate text-left w-full hover:text-blue-600 transition-colors" 
+                            title={entry.request.url}
+                          >
                             {entry.request.url}
-                          </p>
+                          </button>
                           <p className="text-[10px] text-black/30 mt-0.5 truncate">
                             {entry.response.content.mimeType}
                           </p>
@@ -488,6 +494,7 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
         )}
       </main>
       {harData && <ChatBox harData={harData} />}
+      <RequestDetail entry={selectedEntry} onClose={() => setSelectedEntry(null)} />
     </div>
   );
 }

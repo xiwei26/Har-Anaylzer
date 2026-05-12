@@ -24,6 +24,11 @@ export interface HAREntry {
     cookies: any[];
     headersSize: number;
     bodySize: number;
+    postData?: {
+      mimeType: string;
+      text?: string;
+      params?: Array<{ name: string; value: string }>;
+    };
   };
   response: {
     status: number;
