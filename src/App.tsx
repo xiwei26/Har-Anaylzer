@@ -47,6 +47,7 @@ export default function App() {
   const [sortField, setSortField] = useState<keyof HAREntry | 'url' | 'status' | 'method' | 'size' | 'time'>('time');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [selectedEntry, setSelectedEntry] = useState<HAREntry | null>(null);
+  const [selectedPageId, setSelectedPageId] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (file: File) => {
@@ -62,6 +63,12 @@ export default function App() {
       const text = await file.text();
       const parsed: HARData = JSON.parse(text);
       setHarData(parsed);
+      
+      if (parsed.log.pages && parsed.log.pages.length > 0) {
+        setSelectedPageId(parsed.log.pages[0].id);
+      } else {
+        setSelectedPageId('');
+      }
       
       const aiResult = await analyzeHARWithAI(parsed);
       setAnalysis(aiResult);
@@ -80,12 +87,18 @@ export default function App() {
   }, []);
 
   const filteredEntries = harData?.log.entries.filter(entry => {
-    const matchesSearch = entry.request.url.toLowerCase().includes(searchTerm.toLowerCase());
+    const searchTermLower = searchTerm.toLowerCase();
+    const matchesSearch = 
+      entry.request.url.toLowerCase().includes(searchTermLower) ||
+      entry.request.headers.some(h => h.name.toLowerCase().includes(searchTermLower) || h.value.toLowerCase().includes(searchTermLower)) ||
+      entry.response.content.text?.toLowerCase().includes(searchTermLower);
+    
     const matchesFilter = 
       filter === 'all' ? true :
       filter === 'errors' ? entry.response.status >= 400 :
       filter === 'slow' ? entry.time > 1000 : true;
-    return matchesSearch && matchesFilter;
+    const matchesPage = selectedPageId ? entry.pageref === selectedPageId : true;
+    return matchesSearch && matchesFilter && matchesPage;
   }).sort((a, b) => {
     let valA: any;
     let valB: any;
@@ -118,6 +131,22 @@ export default function App() {
     if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
     return 0;
   }) || [];
+
+  const minStartTime = Math.min(...filteredEntries.map(e => new Date(e.startedDateTime).getTime()));
+  const maxEndTime = Math.max(...filteredEntries.map(e => new Date(e.startedDateTime).getTime() + e.time));
+  const totalDuration = maxEndTime - minStartTime;
+
+  const getWaterfallStyle = (entry: HAREntry) => {
+    const start = new Date(entry.startedDateTime).getTime();
+    const offset = ((start - minStartTime) / totalDuration) * 100;
+    const width = (entry.time / totalDuration) * 100;
+    return {
+      left: `${offset}%`,
+      width: `${Math.max(width, 0.5)}%`
+    };
+  };
+
+  const currentPage = harData?.log.pages?.find(p => p.id === selectedPageId);
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -186,7 +215,8 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
 
   const chartData: Array<{ name: string; value: number }> = harData ? Object.entries(
     harData.log.entries.reduce((acc: Record<string, number>, e) => {
-      const type = e.response.content.mimeType.split('/')[1]?.split(';')[0] || 'other';
+      const mimeType = e.response.content.mimeType || 'unknown/unknown';
+      const type = mimeType.split('/')[1]?.split(';')[0] || 'other';
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {})
@@ -291,29 +321,70 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
               <SummaryCard 
                 icon={<Zap className="w-5 h-5 text-yellow-500" />}
                 label="Total Requests"
-                value={analysis?.summary.totalRequests || 0}
-                subValue="Network calls"
+                value={filteredEntries.length}
+                subValue="On current page"
               />
               <SummaryCard 
                 icon={<ShieldAlert className="w-5 h-5 text-red-500" />}
                 label="Failed Requests"
-                value={analysis?.summary.failedRequests || 0}
-                subValue={`${((analysis?.summary.failedRequests || 0) / (analysis?.summary.totalRequests || 1) * 100).toFixed(1)}% failure rate`}
+                value={filteredEntries.filter(e => e.response.status >= 400).length}
+                subValue={`${(filteredEntries.filter(e => e.response.status >= 400).length / (filteredEntries.length || 1) * 100).toFixed(1)}% failure rate`}
                 trend="danger"
               />
-              <SummaryCard 
-                icon={<Clock className="w-5 h-5 text-blue-500" />}
-                label="Avg Response"
-                value={`${Math.round(analysis?.summary.avgResponseTime || 0)}ms`}
-                subValue="Latency"
-              />
-              <SummaryCard 
-                icon={<HardDrive className="w-5 h-5 text-purple-500" />}
-                label="Total Payload"
-                value={formatSize(analysis?.summary.totalSize || 0)}
-                subValue="Transferred"
-              />
+              {currentPage ? (
+                <>
+                  <SummaryCard 
+                    icon={<Clock className="w-5 h-5 text-blue-500" />}
+                    label="DOM Loaded"
+                    value={`${Math.round(currentPage.pageTimings.onContentLoad)}ms`}
+                    subValue="Interactive"
+                  />
+                  <SummaryCard 
+                    icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                    label="Page Loaded"
+                    value={`${Math.round(currentPage.pageTimings.onLoad)}ms`}
+                    subValue="Fully complete"
+                  />
+                </>
+              ) : (
+                <>
+                  <SummaryCard 
+                    icon={<Clock className="w-5 h-5 text-blue-500" />}
+                    label="Avg Response"
+                    value={`${Math.round(analysis?.summary.avgResponseTime || 0)}ms`}
+                    subValue="Latency"
+                  />
+                  <SummaryCard 
+                    icon={<HardDrive className="w-5 h-5 text-purple-500" />}
+                    label="Total Payload"
+                    value={formatSize(analysis?.summary.totalSize || 0)}
+                    subValue="Transferred"
+                  />
+                </>
+              )}
             </div>
+
+            {harData.log.pages && harData.log.pages.length > 1 && (
+              <section className="bg-white rounded-2xl p-4 border border-black/5 flex items-center gap-4">
+                <span className="text-sm font-bold text-black/40 uppercase tracking-widest px-2">Select Page:</span>
+                <div className="flex flex-wrap gap-2">
+                  {harData.log.pages.map(page => (
+                    <button
+                      key={page.id}
+                      onClick={() => setSelectedPageId(page.id)}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-sm font-medium transition-all border",
+                        selectedPageId === page.id 
+                          ? "bg-black text-white border-black" 
+                          : "bg-white text-black/60 border-black/5 hover:border-black/20"
+                      )}
+                    >
+                      {page.title || page.id}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) }
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               {/* Issues */}
@@ -412,27 +483,28 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
               </div>
               
               <div className="overflow-x-auto">
-                <div className="min-w-[800px]">
-                  <div className="grid grid-cols-[1fr_100px_100px_120px_100px] gap-4 px-6 py-3 bg-black/[0.02] text-[10px] font-mono uppercase tracking-widest text-black/40">
+                <div className="min-w-[1000px]">
+                  <div className="grid grid-cols-[1fr_80px_80px_100px_80px_200px] gap-4 px-6 py-3 bg-black/[0.02] text-[10px] font-mono uppercase tracking-widest text-black/40">
                     <button onClick={() => handleSort('url')} className="flex items-center gap-1 hover:text-black transition-colors text-left">
                       Request URL <SortIndicator field="url" />
                     </button>
-                    <button onClick={() => handleSort('status')} className="flex items-center gap-1 hover:text-black transition-colors text-left">
+                    <button onClick={() => handleSort('status')} className="flex items-center gap-1 hover:text-black transition-colors text-left px-2">
                       Status <SortIndicator field="status" />
                     </button>
-                    <button onClick={() => handleSort('method')} className="flex items-center gap-1 hover:text-black transition-colors text-left">
+                    <button onClick={() => handleSort('method')} className="flex items-center gap-1 hover:text-black transition-colors text-left px-2">
                       Method <SortIndicator field="method" />
                     </button>
-                    <button onClick={() => handleSort('time')} className="flex items-center gap-1 hover:text-black transition-colors text-left">
+                    <button onClick={() => handleSort('time')} className="flex items-center gap-1 hover:text-black transition-colors text-left px-2">
                       Time <SortIndicator field="time" />
                     </button>
-                    <button onClick={() => handleSort('size')} className="flex items-center gap-1 hover:text-black transition-colors text-left">
+                    <button onClick={() => handleSort('size')} className="flex items-center gap-1 hover:text-black transition-colors text-left px-2">
                       Size <SortIndicator field="size" />
                     </button>
+                    <div className="px-2">Waterfall Timeline</div>
                   </div>
                   <div className="divide-y divide-black/5">
                     {filteredEntries.map((entry, i) => (
-                      <div key={i} className="grid grid-cols-[1fr_100px_100px_120px_100px] gap-4 px-6 py-4 hover:bg-black/[0.01] transition-colors items-center">
+                      <div key={i} className="grid grid-cols-[1fr_80px_80px_100px_80px_200px] gap-4 px-6 py-4 hover:bg-black/[0.01] transition-colors items-center group/row">
                         <div className="min-w-0">
                           <button 
                             onClick={() => setSelectedEntry(entry)}
@@ -445,7 +517,7 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
                             {entry.response.content.mimeType}
                           </p>
                         </div>
-                        <div>
+                        <div className="px-2">
                           <span className={cn(
                             "px-2 py-1 rounded-md text-[10px] font-bold",
                             getStatusColor(entry.response.status)
@@ -453,11 +525,11 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
                             {entry.response.status}
                           </span>
                         </div>
-                        <div className="text-[10px] font-mono font-bold text-black/40">
+                        <div className="text-[10px] font-mono font-bold text-black/40 px-2">
                           {entry.request.method}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1.5 bg-black/5 rounded-full overflow-hidden">
+                        <div className="flex items-center gap-2 px-2">
+                          <div className="w-12 h-1.5 bg-black/5 rounded-full overflow-hidden">
                             <div 
                               className={cn(
                                 "h-full rounded-full",
@@ -468,8 +540,32 @@ ${harData.log.entries.map(e => `| ${e.request.url} | ${e.response.status} | ${e.
                           </div>
                           <span className="text-xs font-mono text-black/60">{Math.round(entry.time)}ms</span>
                         </div>
-                        <div className="text-xs font-mono text-black/60">
+                        <div className="text-xs font-mono text-black/60 px-2 text-right">
                           {formatSize(entry.response.content.size)}
+                        </div>
+                        <div className="px-2 h-8 relative flex items-center">
+                          <div className="absolute inset-x-2 h-0.5 bg-black/[0.03] rounded-full" />
+                          {currentPage && (
+                            <>
+                              <div 
+                                className="absolute h-full w-px bg-blue-500/20 z-0"
+                                style={{ left: `${(currentPage.pageTimings.onContentLoad / totalDuration) * 100}%` }}
+                                title="DOM Content Loaded"
+                              />
+                              <div 
+                                className="absolute h-full w-px bg-red-500/20 z-0"
+                                style={{ left: `${(currentPage.pageTimings.onLoad / totalDuration) * 100}%` }}
+                                title="Page Load"
+                              />
+                            </>
+                          )}
+                          <motion.div 
+                            className="absolute h-4 bg-blue-500/30 rounded-sm border-x border-blue-500/50"
+                            style={getWaterfallStyle(entry)}
+                            initial={{ scaleX: 0 }}
+                            animate={{ scaleX: 1 }}
+                            title={`${Math.round(entry.time)}ms (start at ${Math.round(new Date(entry.startedDateTime).getTime() - minStartTime)}ms)`}
+                          />
                         </div>
                       </div>
                     ))}

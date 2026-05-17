@@ -13,7 +13,7 @@ export async function* chatWithAI(har: HARData, messages: Message[]): AsyncGener
     status: e.response.status,
     time: Math.round(e.time),
     size: e.response.content.size,
-    type: e.response.content.mimeType.split(';')[0]
+    type: (e.response.content.mimeType || 'unknown').split(';')[0]
   })).slice(0, 50); // Limit to first 50 entries to avoid token limits
 
   const systemInstruction = `
@@ -70,7 +70,7 @@ export async function analyzeHARWithAI(har: HARData): Promise<AnalysisResult> {
       statusText: e.response.statusText
     })).slice(0, 10),
     mimeTypeDistribution: entries.reduce((acc: any, e) => {
-      const type = e.response.content.mimeType.split(';')[0];
+      const type = (e.response.content.mimeType || 'unknown').split(';')[0];
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {})

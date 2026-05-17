@@ -14,6 +14,7 @@ export interface HARData {
 
 export interface HAREntry {
   startedDateTime: string;
+  pageref?: string;
   time: number;
   request: {
     method: string;
