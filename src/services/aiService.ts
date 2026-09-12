@@ -1,29 +1,26 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { HARData, AnalysisResult, Message } from "../types";
+import { getSanitizedAIContext, sanitizeUrl } from "../utils/sanitizer";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export async function* chatWithAI(har: HARData, messages: Message[]): AsyncGenerator<string> {
   const entries = har.log.entries;
   
-  // Prepare a condensed version of the HAR for the AI context
-  const contextData = entries.map(e => ({
-    url: e.request.url.substring(0, 150),
-    method: e.request.method,
-    status: e.response.status,
-    time: Math.round(e.time),
-    size: e.response.content.size,
-    type: (e.response.content.mimeType || 'unknown').split(';')[0]
-  })).slice(0, 50); // Limit to first 50 entries to avoid token limits
+  // Intelligent prioritized context with sensitive tokens sanitized
+  const contextData = getSanitizedAIContext(entries, 50);
 
   const systemInstruction = `
-    You are an expert network analyst. You have access to a summary of network requests from a HAR file.
-    Use this data to answer user questions about the network traffic, performance, errors, or specific requests.
+    You are an expert network and performance analyst. You have access to a prioritized, sanitized summary of network requests from an analyzed HAR file (including critical errors, slowest requests, largest payloads, and representative traffic).
+    Use this data to answer user questions about network performance, failed requests, headers, timing bottlenecks, and optimization opportunities.
     
-    Network Context (First 50 requests):
+    Network Context (Prioritized & Sanitized Samples):
     ${JSON.stringify(contextData, null, 2)}
     
-    Be concise and technical. Use Markdown for formatting.
+    Total Session Requests: ${entries.length}
+    Total Failed Requests (>=400): ${entries.filter(e => e.response.status >= 400).length}
+    
+    Be concise, technical, and accurate. Format your response with clear Markdown.
   `;
 
   const contents = messages.map(m => ({
@@ -55,20 +52,29 @@ export async function* chatWithAI(har: HARData, messages: Message[]): AsyncGener
 export async function analyzeHARWithAI(har: HARData): Promise<AnalysisResult> {
   const entries = har.log.entries;
   
-  // Prepare a condensed version of the HAR for the AI
+  // Prepare sanitized diagnostic data
   const summaryData = {
     totalRequests: entries.length,
     failedRequests: entries.filter(e => e.response.status >= 400).length,
-    slowRequests: entries.filter(e => e.time > 1000).map(e => ({
-      url: e.request.url.substring(0, 100),
-      time: e.time,
-      status: e.response.status
-    })).slice(0, 10),
-    errors: entries.filter(e => e.response.status >= 400).map(e => ({
-      url: e.request.url.substring(0, 100),
-      status: e.response.status,
-      statusText: e.response.statusText
-    })).slice(0, 10),
+    slowRequests: entries
+      .filter(e => e.time > 1000)
+      .sort((a, b) => b.time - a.time)
+      .map(e => ({
+        url: sanitizeUrl(e.request.url).substring(0, 120),
+        method: e.request.method,
+        time: Math.round(e.time),
+        status: e.response.status
+      }))
+      .slice(0, 15),
+    errors: entries
+      .filter(e => e.response.status >= 400)
+      .map(e => ({
+        url: sanitizeUrl(e.request.url).substring(0, 120),
+        method: e.request.method,
+        status: e.response.status,
+        statusText: e.response.statusText
+      }))
+      .slice(0, 15),
     mimeTypeDistribution: entries.reduce((acc: any, e) => {
       const type = (e.response.content.mimeType || 'unknown').split(';')[0];
       acc[type] = (acc[type] || 0) + 1;
@@ -77,7 +83,7 @@ export async function analyzeHARWithAI(har: HARData): Promise<AnalysisResult> {
   };
 
   const prompt = `
-    Analyze this network traffic summary from a HAR file and identify broken parts, bottlenecks, and provide advice.
+    Analyze this network traffic summary from a HAR file and identify broken parts, bottlenecks, and provide actionable advice.
     
     Summary:
     ${JSON.stringify(summaryData, null, 2)}
@@ -110,7 +116,7 @@ export async function analyzeHARWithAI(har: HARData): Promise<AnalysisResult> {
     const result = JSON.parse(response.text || "{}");
     
     // Supplement with calculated data if AI missed some fields
-    const totalSize = entries.reduce((acc, e) => acc + e.response.content.size, 0);
+    const totalSize = entries.reduce((acc, e) => acc + (e.response.content.size || 0), 0);
     const totalTime = entries.reduce((acc, e) => acc + e.time, 0);
     
     return {
@@ -119,7 +125,7 @@ export async function analyzeHARWithAI(har: HARData): Promise<AnalysisResult> {
         failedRequests: summaryData.failedRequests,
         totalSize: result.summary?.totalSize || totalSize,
         totalTime: result.summary?.totalTime || totalTime,
-        avgResponseTime: result.summary?.avgResponseTime || (totalTime / entries.length)
+        avgResponseTime: result.summary?.avgResponseTime || (entries.length ? totalTime / entries.length : 0)
       },
       issues: result.issues || [],
       advice: result.advice || "No specific advice generated."
